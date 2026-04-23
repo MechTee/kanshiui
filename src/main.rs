@@ -36,8 +36,8 @@ fn main() -> eframe::Result<()> {
             connector: arg_value(&args, "--connector").unwrap_or_else(|| "unknown".to_string()),
             display_name: arg_value(&args, "--display-name")
                 .unwrap_or_else(|| "Unknown Display".to_string()),
-            scale: arg_value(&args, "--scale").unwrap_or_else(|| "1".to_string()),
-            mode: arg_value(&args, "--mode").unwrap_or_else(|| "unknown mode".to_string()),
+            _scale: arg_value(&args, "--scale").unwrap_or_else(|| "1".to_string()),
+            _mode: arg_value(&args, "--mode").unwrap_or_else(|| "unknown mode".to_string()),
         };
 
         let options = eframe::NativeOptions {

@@ -24,6 +24,11 @@ pub fn load_profiles(path: &Path) -> Result<(String, Vec<Profile>)> {
     }
     let content = fs::read_to_string(path)
         .with_context(|| format!("failed to read kanshi config at {}", path.display()))?;
+    eprintln!(
+        "kanshi: loaded config {} ({} bytes)",
+        path.display(),
+        content.len()
+    );
     let profiles = parse_profiles(&content)?;
     Ok((content, profiles))
 }
@@ -90,7 +95,13 @@ pub fn upsert_profile(path: &Path, profile: &Profile) -> Result<()> {
     }
 
     backup_existing(path)?;
-    atomic_write(path, &next)
+    atomic_write(path, &next)?;
+    eprintln!(
+        "kanshi: wrote config {} ({} bytes)",
+        path.display(),
+        next.len()
+    );
+    Ok(())
 }
 
 /// Replace the config file contents with the provided contents (atomic write
@@ -102,7 +113,13 @@ pub fn replace_config(path: &Path, contents: &str) -> Result<()> {
             .with_context(|| format!("failed to create config dir {}", parent.display()))?;
     }
     backup_existing(path)?;
-    atomic_write(path, contents)
+    atomic_write(path, contents)?;
+    eprintln!(
+        "kanshi: replaced config {} ({} bytes)",
+        path.display(),
+        contents.len()
+    );
+    Ok(())
 }
 
 pub fn generate_profile(profile: &Profile) -> String {

@@ -42,6 +42,10 @@ impl KanshiApp {
     pub fn refresh_all(&mut self) {
         match rescan_outputs() {
             Ok(outputs) => {
+                // Save discovered outputs and log a concise summary for diagnostics
+                let count = outputs.len();
+                let ids: Vec<String> = outputs.iter().map(|o| o.display_id()).collect();
+                eprintln!("kanshi: scanned {} outputs: {}", count, ids.join(", "));
                 self.state.connected_outputs = outputs;
             }
             Err(err) => {
@@ -91,7 +95,7 @@ impl KanshiApp {
 
             // Ensure uniqueness among existing profile names in state.profiles.
             let mut idx = 1;
-            let mut exists = |name: &str| self.state.profiles.iter().any(|p| p.name == name);
+            let exists = |name: &str| self.state.profiles.iter().any(|p| p.name == name);
             while exists(&candidate) {
                 idx += 1;
                 candidate = format!("{} ({})", candidate, idx);
@@ -230,6 +234,7 @@ impl KanshiApp {
         }
     }
 
+    #[allow(dead_code)]
     pub fn load_profile_into_editor(&mut self, profile_name: &str) {
         if let Some(profile) = self
             .state
@@ -278,7 +283,6 @@ impl KanshiApp {
                     pids.len()
                 );
             }
-            eprintln!("spawn_identify_overlays returned pids={:?}", pids);
         } else {
             kill_identify_overlays(&mut self.state.identify_overlay_pids);
             self.state.status = "Screen identification overlays disabled".to_string();
@@ -302,6 +306,7 @@ impl KanshiApp {
     // Shift all screen positions so the minimal x/y among enabled screens
     // becomes 0,0. This ensures saved profiles have their bounding rect
     // anchored at the origin.
+    #[allow(dead_code)]
     fn align_profile_positions(profile: &mut Profile) {
         let mut min_x: Option<i32> = None;
         let mut min_y: Option<i32> = None;
@@ -322,6 +327,7 @@ impl KanshiApp {
 
     // Public helper to align the currently loaded profile in-place. Returns
     // an error string when there is no profile loaded.
+    #[allow(dead_code)]
     pub fn align_current_profile(&mut self) -> Result<(), &'static str> {
         if let Some(profile) = self.state.current_profile.as_mut() {
             Self::align_profile_positions(profile);

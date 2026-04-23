@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use swayipc::{Connection, Mode as SwayMode, Rect};
+use swayipc::{Connection, Mode as SwayMode};
 
 use crate::model::{best_mode, OutputMode, RuntimeOutput, ScreenConfig};
 
@@ -26,7 +26,6 @@ pub fn rescan_outputs() -> Result<Vec<RuntimeOutput>> {
             make: non_empty(output.make),
             model: non_empty(output.model),
             serial: non_empty(output.serial),
-            active: output.active,
             current_scale: output.scale.unwrap_or(1.0),
             available_modes: modes,
             layout_x: output.rect.x,
@@ -63,10 +62,7 @@ fn sway_mode_to_mode(mode: &SwayMode) -> OutputMode {
     }
 }
 
-#[allow(dead_code)]
-fn _rect_to_tuple(rect: Rect) -> (i32, i32, i32, i32) {
-    (rect.x, rect.y, rect.width, rect.height)
-}
+// helper removed
 
 fn non_empty(value: String) -> Option<String> {
     let trimmed = value.trim();

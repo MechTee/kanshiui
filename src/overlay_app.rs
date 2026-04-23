@@ -5,8 +5,8 @@ use egui::{Align2, Color32, FontId, Stroke, StrokeKind, Vec2};
 pub struct OverlayPayload {
     pub connector: String,
     pub display_name: String,
-    pub scale: String,
-    pub mode: String,
+    pub _scale: String,
+    pub _mode: String,
 }
 
 pub struct IdentifyOverlayApp {

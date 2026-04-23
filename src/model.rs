@@ -24,7 +24,6 @@ pub struct RuntimeOutput {
     pub make: Option<String>,
     pub model: Option<String>,
     pub serial: Option<String>,
-    pub active: bool,
     pub current_scale: f64,
     pub available_modes: Vec<OutputMode>,
     pub layout_x: i32,
@@ -71,7 +70,6 @@ pub struct Profile {
 
 #[derive(Clone, Debug, Default)]
 pub struct AppSettings {
-    pub snap_enabled: bool,
     pub snap_threshold_px: i32,
 }
 

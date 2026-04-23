@@ -8,15 +8,18 @@ use anyhow::{anyhow, Context, Result};
 
 pub fn restart_kanshi() -> Result<()> {
     if restart_with_systemd("kanshi.service").is_ok() {
+        eprintln!("kanshi: restarted using systemd unit kanshi.service");
         return Ok(());
     }
 
     let _ = ensure_kanshi_user_service();
 
     if restart_with_systemd("kanshi").is_ok() {
+        eprintln!("kanshi: restarted using systemd unit kanshi");
         return Ok(());
     }
     if restart_with_systemd("kanshi.service").is_ok() {
+        eprintln!("kanshi: restarted using systemd unit kanshi.service");
         return Ok(());
     }
     restart_fallback()
@@ -28,8 +31,10 @@ fn restart_with_systemd(unit: &str) -> Result<()> {
         .status()
         .with_context(|| format!("failed to run systemctl for unit {unit}"))?;
     if status.success() {
+        eprintln!("systemctl --user restart {} succeeded", unit);
         Ok(())
     } else {
+        eprintln!("systemctl --user restart {} failed", unit);
         Err(anyhow!("systemctl restart failed for unit {unit}"))
     }
 }
@@ -95,16 +100,38 @@ pub fn ensure_kanshi_user_service() -> Result<()> {
             service_path.display()
         )
     })?;
+    eprintln!("kanshi: wrote systemd unit {}", service_path.display());
 
     // Reload and restart the user service so it will pick up our unit.
-    let _ = Command::new("systemctl")
+    if let Ok(status) = Command::new("systemctl")
         .args(["--user", "daemon-reload"])
-        .status();
-    let _ = Command::new("systemctl")
+        .status()
+    {
+        if status.success() {
+            eprintln!("systemctl --user daemon-reload succeeded");
+        } else {
+            eprintln!("systemctl --user daemon-reload failed");
+        }
+    }
+    if let Ok(status) = Command::new("systemctl")
         .args(["--user", "enable", "--now", "kanshi.service"])
-        .status();
-    let _ = Command::new("systemctl")
+        .status()
+    {
+        if status.success() {
+            eprintln!("systemctl --user enable --now kanshi.service succeeded");
+        } else {
+            eprintln!("systemctl --user enable --now kanshi.service failed");
+        }
+    }
+    if let Ok(status) = Command::new("systemctl")
         .args(["--user", "restart", "kanshi.service"])
-        .status();
+        .status()
+    {
+        if status.success() {
+            eprintln!("systemctl --user restart kanshi.service succeeded");
+        } else {
+            eprintln!("systemctl --user restart kanshi.service failed");
+        }
+    }
     Ok(())
 }

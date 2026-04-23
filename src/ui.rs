@@ -1,12 +1,10 @@
-use std::process::{Command, Stdio};
-use std::time::Duration;
 use std::time::Instant;
 
 use eframe::egui;
 use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2};
 
 use crate::app::KanshiApp;
-use crate::model::{trim_float, OutputMode, RuntimeOutput, ScreenConfig};
+use crate::model::{trim_float, OutputMode, ScreenConfig};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -95,11 +93,7 @@ pub fn render_main_ui(app: &mut KanshiApp, ctx: &egui::Context) {
         .min_width(200.0)
         .max_width(800.0)
         .show(ctx, |ui| {
-            // Important for resizable side panels in egui: make content take
-            // the available width so the panel doesn't snap back to
-            // content-minimum width after dragging.
             ui.set_min_width(ui.available_width());
-
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
@@ -370,9 +364,15 @@ pub fn render_main_ui(app: &mut KanshiApp, ctx: &egui::Context) {
             .resizable(false)
             .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
             .show(ctx, |ui| {
+                // Top margin for visual separation from the window title
+                // keep small to avoid overly-tall dialogs
+                ui.add_space(8.0);
                 ui.label(format!("Works as expected? Reset in {}s", remaining));
-                ui.horizontal(|ui| {
-                    if ui.button("Yes").clicked() {
+                ui.horizontal_centered(|ui| {
+                    if ui
+                        .add_sized([160.0, 40.0], egui::Button::new("Yes"))
+                        .clicked()
+                    {
                         // confirm: stop pending confirmation
                         app.state.pending_confirmation = false;
                         app.state.confirm_deadline = None;
@@ -382,7 +382,11 @@ pub fn render_main_ui(app: &mut KanshiApp, ctx: &egui::Context) {
                             app.state.current_profile_name.trim()
                         );
                     }
-                    if ui.button("No").clicked() {
+                    ui.add_space(8.0);
+                    if ui
+                        .add_sized([160.0, 40.0], egui::Button::new("No"))
+                        .clicked()
+                    {
                         // reject and restore previous config
                         app.state.pending_confirmation = false;
                         app.state.confirm_deadline = None;
@@ -431,11 +435,16 @@ pub fn render_main_ui(app: &mut KanshiApp, ctx: &egui::Context) {
             .resizable(false)
             .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
             .show(ctx, |ui| {
+                // Top margin for dialog content (small)
+                ui.add_space(8.0);
                 ui.label("KanshiUI will manage display configuration using a dedicated file and a user systemd service.");
                 ui.label("Your existing kanshi configuration will not be modified, but it will not be used while KanshiUI manages output profiles.");
                 ui.label("If you only want to temporarily adjust your screens, this is fine — KanshiUI keeps backups and lets you restore the previous configuration.");
-                ui.horizontal(|ui| {
-                    if ui.button("OK").clicked() {
+                ui.horizontal_centered(|ui| {
+                    if ui
+                        .add_sized([160.0, 40.0], egui::Button::new("OK"))
+                        .clicked()
+                    {
                         app.state.show_first_run_dialog = false;
                     }
                 });
@@ -457,154 +466,7 @@ pub fn render_main_ui(app: &mut KanshiApp, ctx: &egui::Context) {
     });
 }
 
-pub fn render_output_identify_overlays(
-    ctx: &egui::Context,
-    outputs: &[RuntimeOutput],
-    last_reposition: &mut Option<Instant>,
-) {
-    let now = Instant::now();
-    // Reposition overlays only once when identify mode is turned on.
-    // Repeated external calls can stall the UI.
-    let should_reposition = last_reposition.is_none();
-
-    for output in outputs {
-        if output.layout_width <= 0 || output.layout_height <= 0 {
-            continue;
-        }
-
-        let viewport_id = egui::ViewportId::from_hash_of((
-            "output-ident",
-            output.connector_name.as_str(),
-            output.layout_x,
-            output.layout_y,
-        ));
-
-        let title = format!("Identify {}", output.connector_name);
-        // Convert compositor physical coordinates to egui logical points
-        // so the builder and viewport commands use the coordinate space the
-        // egui/eframe backend expects. This uses the current ctx pixels_per_point.
-        let ppp = ctx.pixels_per_point();
-        let phys_x = output.layout_x as f32 + 24.0;
-        let phys_y = output.layout_y as f32 + 24.0;
-        let logical_pos = Pos2::new(phys_x / ppp, phys_y / ppp);
-
-        let mut builder = egui::ViewportBuilder::default();
-        builder = builder
-            .with_decorations(false)
-            .with_resizable(false)
-            .with_transparent(true)
-            .with_always_on_top()
-            .with_mouse_passthrough(true)
-            // Set initial builder position in logical points.
-            .with_position(logical_pos)
-            .with_inner_size(Vec2::new(500.0, 180.0))
-            .with_title(title);
-
-        let display_name = output.display_id();
-        let connector = output.connector_name.clone();
-        let mode = output
-            .available_modes
-            .iter()
-            .max_by(|a, b| {
-                let area_a = a.width as u64 * a.height as u64;
-                let area_b = b.width as u64 * b.height as u64;
-                area_a.cmp(&area_b).then_with(|| {
-                    a.refresh_hz
-                        .partial_cmp(&b.refresh_hz)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
-            })
-            .cloned();
-
-        let mode_label = mode
-            .map(|m| m.as_kanshi_mode())
-            .unwrap_or_else(|| "unknown mode".to_string());
-
-        ctx.show_viewport_immediate(viewport_id, builder, move |ctx, _class| {
-            egui::CentralPanel::default()
-                .frame(egui::Frame::NONE.fill(Color32::TRANSPARENT))
-                .show(ctx, |ui| {
-                    let rect = ui.max_rect();
-                    // Use the output's deterministic color for the overlay
-                    // background so identify overlays match the sidebar.
-                    let bg = color_for_id(&display_name);
-                    let bg = Color32::from_rgba_unmultiplied(bg.r(), bg.g(), bg.b(), 220);
-                    // Use square corners for overlays (no rounded corners)
-                    ui.painter().rect_filled(rect, 0.0, bg);
-                    ui.painter().rect_stroke(
-                        rect,
-                        0.0,
-                        Stroke::new(2.0, Color32::from_rgb(113, 181, 255)),
-                        StrokeKind::Outside,
-                    );
-
-                    // Overlay must show exactly two white lines: display name
-                    // and connector. Keep other visual styling unchanged.
-                    ui.painter().text(
-                        rect.left_top() + Vec2::new(18.0, 52.0),
-                        Align2::LEFT_TOP,
-                        display_name.clone(),
-                        FontId::proportional(24.0),
-                        Color32::WHITE,
-                    );
-                    ui.painter().text(
-                        rect.left_top() + Vec2::new(18.0, 94.0),
-                        Align2::LEFT_TOP,
-                        connector.clone(),
-                        FontId::proportional(18.0),
-                        Color32::WHITE,
-                    );
-                });
-        });
-
-        // Request the native window be moved to the desired global position.
-        // `send_viewport_cmd_to` is used rather than spawning swaymsg so we
-        // don't block the UI thread. Only send the command periodically to
-        // avoid flooding the platform with repeated commands.
-        if should_reposition {
-            // Try native viewport move first.
-            let _ = ctx.send_viewport_cmd_to(
-                viewport_id,
-                egui::ViewportCommand::OuterPosition(logical_pos),
-            );
-        }
-    }
-
-    if should_reposition {
-        *last_reposition = Some(now);
-    }
-}
-
-fn move_overlay_to_output(connector_name: &str) {
-    let title = format!("Identify {connector_name}");
-    let criteria = format!("[title=\"{}\"]", title.replace('"', "\\\""));
-    let command =
-        format!("floating enable, move window to output {connector_name}, move position 24 24");
-    let _ = Command::new("swaymsg")
-        .arg(criteria)
-        .arg(command)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-}
-
-pub fn schedule_overlay_reposition(connectors: Vec<String>) {
-    if connectors.is_empty() {
-        return;
-    }
-
-    std::thread::spawn(move || {
-        // Delay slightly so overlay windows have time to be created, then
-        // retry a few times in case the compositor maps them asynchronously.
-        std::thread::sleep(Duration::from_millis(80));
-        for _ in 0..3 {
-            for connector in &connectors {
-                move_overlay_to_output(connector);
-            }
-            std::thread::sleep(Duration::from_millis(80));
-        }
-    });
-}
+// (identify overlay rendering moved to overlay_app.rs)
 
 fn render_canvas(app: &mut KanshiApp, ui: &mut egui::Ui, editable: bool) {
     let profile = match app.state.current_profile.as_mut() {
@@ -919,11 +781,4 @@ fn snap_rect_to_others(mut rect: Rect, others: &[Rect], threshold_ui: f32) -> Re
     rect = rect.translate(Vec2::new(dx, dy));
     rect
 }
-fn consider_axis_candidate(
-    _current_edge: i32,
-    _other_edge: i32,
-    _threshold: i32,
-    _best: &mut Option<(i32, i32)>,
-) {
-    // kept for compatibility but snapping was removed; no-op
-}
+// consider_axis_candidate removed (unused)
