@@ -22,10 +22,7 @@ fn launch_overlay_process(output: &RuntimeOutput) -> Option<u32> {
         .map(|m| m.as_kanshi_mode())
         .unwrap_or_else(|| "unknown mode".to_string());
 
-    eprintln!(
-        "launching overlay exe={:?} connector={} x={} y={}",
-        exe, connector, output.layout_x, output.layout_y
-    );
+    // spawning overlay process without logging
     let child = match Command::new(exe)
         .arg("--identify-overlay")
         .arg("--connector")
@@ -45,26 +42,28 @@ fn launch_overlay_process(output: &RuntimeOutput) -> Option<u32> {
         .spawn()
     {
         Ok(c) => c,
-        Err(e) => {
-            eprintln!(
-                "failed to spawn overlay process for connector {}: {e}",
-                connector
-            );
+        Err(_e) => {
+            // failed to spawn overlay process; silently ignore and return None
             return None;
         }
     };
 
     let pid = child.id();
-    eprintln!("spawned overlay pid={} for connector={}", pid, connector);
+    // do not log when spawning overlays
 
-    // Move overlay to target output asynchronously with a few retries so it
-    // lands correctly once the compositor maps the window.
+    // Move overlay to target output asynchronously with retries so it
+    // lands correctly once the compositor maps the window. Sleep a bit
+    // before the first try to give the window time to be created.
     let connector_for_move = connector.clone();
     std::thread::spawn(move || {
-        for _ in 0..10 {
+        std::thread::sleep(std::time::Duration::from_millis(80));
+        for _ in 0..8 {
             let criteria = format!("[pid=\"{pid}\"]");
+            // Quote the connector name to be safe for swaymsg parsing.
+            let connector_quoted = connector_for_move.replace('"', "\\\"");
             let command = format!(
-                "floating enable, sticky enable, border pixel 0, move window to output {connector_for_move}, move position 24 24"
+                "floating enable, sticky enable, border pixel 0, move window to output \"{}\", move position 24 24",
+                connector_quoted
             );
             let _ = Command::new("swaymsg")
                 .arg(criteria)
@@ -72,7 +71,7 @@ fn launch_overlay_process(output: &RuntimeOutput) -> Option<u32> {
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .status();
-            std::thread::sleep(std::time::Duration::from_millis(25));
+            std::thread::sleep(std::time::Duration::from_millis(80));
         }
     });
 

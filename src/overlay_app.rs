@@ -1,3 +1,4 @@
+use crate::ui::color_for_id;
 use eframe::egui;
 use egui::{Align2, Color32, FontId, Stroke, StrokeKind, Vec2};
 
@@ -24,25 +25,19 @@ impl eframe::App for IdentifyOverlayApp {
             .frame(egui::Frame::NONE.fill(Color32::TRANSPARENT))
             .show(ctx, |ui| {
                 let rect = ui.max_rect();
-                ui.painter().rect_filled(
-                    rect,
-                    16.0,
-                    Color32::from_rgba_unmultiplied(8, 14, 25, 220),
-                );
+                let bg = color_for_id(&self.payload.display_name);
+                let bg = Color32::from_rgba_unmultiplied(bg.r(), bg.g(), bg.b(), 220);
+                // Use square corners for the overlay window background.
+                ui.painter().rect_filled(rect, 0.0, bg);
                 ui.painter().rect_stroke(
                     rect,
-                    16.0,
+                    0.0,
                     Stroke::new(2.0, Color32::from_rgb(113, 181, 255)),
                     StrokeKind::Outside,
                 );
 
-                ui.painter().text(
-                    rect.left_top() + Vec2::new(18.0, 18.0),
-                    Align2::LEFT_TOP,
-                    "Screen Identifier",
-                    FontId::proportional(20.0),
-                    Color32::from_rgb(210, 233, 255),
-                );
+                // Overlay must show exactly two white lines: display name
+                // and connector. Keep other visual styling unchanged.
                 ui.painter().text(
                     rect.left_top() + Vec2::new(18.0, 52.0),
                     Align2::LEFT_TOP,
@@ -53,19 +48,9 @@ impl eframe::App for IdentifyOverlayApp {
                 ui.painter().text(
                     rect.left_top() + Vec2::new(18.0, 94.0),
                     Align2::LEFT_TOP,
-                    format!("Connection: {}", self.payload.connector),
+                    self.payload.connector.clone(),
                     FontId::proportional(18.0),
-                    Color32::from_rgb(199, 219, 241),
-                );
-                ui.painter().text(
-                    rect.left_top() + Vec2::new(18.0, 122.0),
-                    Align2::LEFT_TOP,
-                    format!(
-                        "Current scale: {}  |  Best mode: {}",
-                        self.payload.scale, self.payload.mode
-                    ),
-                    FontId::proportional(16.0),
-                    Color32::from_rgb(176, 198, 223),
+                    Color32::WHITE,
                 );
             });
     }

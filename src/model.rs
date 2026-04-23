@@ -103,12 +103,17 @@ pub struct AppState {
     pub drag_anchor_offset: Option<(f32, f32)>,
     // Whether snapping was active during the current drag session
     pub drag_snap_active: bool,
+    // Runtime-only sidebar width persistence
+    pub sidebar_width: f32,
 }
 
 impl AppState {
     pub fn init_defaults(&mut self) {
         if self.settings.snap_threshold_px <= 0 {
             self.settings.snap_threshold_px = 100;
+        }
+        if self.sidebar_width <= 0.0 {
+            self.sidebar_width = 400.0;
         }
     }
 }
