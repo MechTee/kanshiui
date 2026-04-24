@@ -146,12 +146,18 @@ pub fn render_main_ui(app: &mut KanshiApp, ctx: &egui::Context) {
                                 .map(|o| o.id.clone())
                                 .collect::<Vec<_>>();
                             candidate_lists.push(list);
+                            // Store the physical width/height adjusted for rotation
+                            let (pw, ph) = if s.rotation % 180 != 0 {
+                                (s.selected_mode.height as i32, s.selected_mode.width as i32)
+                            } else {
+                                (s.selected_mode.width as i32, s.selected_mode.height as i32)
+                            };
                             physical_snapshot.push((
                                 s.id.clone(),
                                 s.pos_x,
                                 s.pos_y,
-                                s.selected_mode.width as i32,
-                                s.selected_mode.height as i32,
+                                pw,
+                                ph,
                                 s.mirror,
                             ));
                         }
@@ -226,6 +232,34 @@ pub fn render_main_ui(app: &mut KanshiApp, ctx: &egui::Context) {
                                                             .speed(0.1)
                                                             .range(0.5..=4.0),
                                                     );
+                                                });
+                                                ui.end_row();
+
+                                                // Rotation
+                                                ui.label("Rotation");
+                                                ui.add_enabled_ui(screen.enabled, |ui| {
+                                                    egui::ComboBox::from_id_salt(format!("rotation-{}", uid))
+                                                        .selected_text(match screen.rotation {
+                                                            0 => "0°",
+                                                            90 => "90°",
+                                                            180 => "180°",
+                                                            270 => "270°",
+                                                            _ => "0°",
+                                                        })
+                                                        .show_ui(ui, |ui| {
+                                                            if ui.selectable_label(screen.rotation == 0, "0°").clicked() {
+                                                                screen.rotation = 0;
+                                                            }
+                                                            if ui.selectable_label(screen.rotation == 90, "90°").clicked() {
+                                                                screen.rotation = 90;
+                                                            }
+                                                            if ui.selectable_label(screen.rotation == 180, "180°").clicked() {
+                                                                screen.rotation = 180;
+                                                            }
+                                                            if ui.selectable_label(screen.rotation == 270, "270°").clicked() {
+                                                                screen.rotation = 270;
+                                                            }
+                                                        });
                                                 });
                                                 ui.end_row();
 
@@ -495,15 +529,6 @@ fn render_canvas(app: &mut KanshiApp, ui: &mut egui::Ui, editable: bool) {
         None => return,
     };
     let available = ui.available_size();
-    let (canvas_rect, _) = ui.allocate_exact_size(available, Sense::hover());
-    let painter = ui.painter_at(canvas_rect);
-
-    painter.rect_stroke(
-        canvas_rect,
-        0.0,
-        Stroke::new(1.0, Color32::from_gray(80)),
-        StrokeKind::Inside,
-    );
 
     // Build a list of visible (non-mirroring) screen indices and precompute
     // UI rects only for those. Mirrored screens are not shown on the canvas.
@@ -512,226 +537,314 @@ fn render_canvas(app: &mut KanshiApp, ui: &mut egui::Ui, editable: bool) {
         .filter(|&i| profile.screens[i].enabled && !profile.screens[i].mirror)
         .collect();
 
-    let mut rects: Vec<Rect> = visible_indices
-        .iter()
-        .map(|&i| screen_rect_from_config(&profile.screens[i], canvas_rect))
-        .collect();
-
-    for vis_idx in 0..visible_indices.len() {
-        let i = visible_indices[vis_idx];
-        // Use the precomputed rect for UI interaction.
-        let mut screen_rect = rects[vis_idx];
-        let response = ui.allocate_rect(screen_rect, Sense::click_and_drag());
-
-        if editable && response.dragged() {
-            // current pointer position
-            let pointer_pos = ui
-                .ctx()
-                .pointer_interact_pos()
-                .unwrap_or_else(|| Pos2::new(screen_rect.left(), screen_rect.top()));
-
-            // If this is a new drag for this screen, capture the anchor offset
-            if app.state.drag_anchor_screen != Some(i) {
-                let anchor_offset_x = pointer_pos.x - screen_rect.left();
-                let anchor_offset_y = pointer_pos.y - screen_rect.top();
-                app.state.drag_anchor_screen = Some(i);
-                app.state.drag_anchor_offset = Some((anchor_offset_x, anchor_offset_y));
-                app.state.drag_snap_active = false;
-            }
-
-            let (anchor_x, anchor_y) = app.state.drag_anchor_offset.unwrap_or((
-                pointer_pos.x - screen_rect.left(),
-                pointer_pos.y - screen_rect.top(),
-            ));
-
-            // Desired rectangle positioned so the pointer stays at the same relative offset
-            let desired_left = pointer_pos.x - anchor_x;
-            let desired_top = pointer_pos.y - anchor_y;
-            let desired =
-                Rect::from_min_size(Pos2::new(desired_left, desired_top), screen_rect.size());
-
-            // Build list of other screens' UI rects for snapping. rects[]
-            // were created by screen_rect_from_config and already map stored
-            // pos_x/pos_y (physical) to UI positions, and width/height are
-            // virtual sizes mapped to UI.
-            let mut others_ui: Vec<Rect> = Vec::new();
-            for (j, r) in rects.iter().enumerate() {
-                if j == vis_idx {
-                    continue;
-                }
-                others_ui.push(*r);
-            }
-
-            let shift_held = ui.ctx().input(|i| i.modifiers.shift);
-
-            // Apply snapping in UI coordinates (consistent units). Threshold
-            // is 100 virtual px -> convert to UI pixels.
-            let final_rect = if !shift_held {
-                let threshold_ui = 100.0 * PIXELS_PER_MODE_PIXEL;
-                let snapped = snap_rect_to_others(desired, &others_ui, threshold_ui);
-                if (snapped.left() - desired.left()).abs() > 0.1
-                    || (snapped.top() - desired.top()).abs() > 0.1
-                {
-                    app.state.drag_snap_active = true;
-                    snapped
-                } else {
-                    app.state.drag_snap_active = false;
-                    desired
-                }
+    // Compute bounding box in physical pixels (taking rotation/scale into account
+    // for sizes) so we can make the scrollable content large enough to contain
+    // all visible screens. We convert to UI pixels later by multiplying by
+    // PIXELS_PER_MODE_PIXEL.
+    let mut min_px_x = std::f32::INFINITY;
+    let mut min_px_y = std::f32::INFINITY;
+    let mut max_px_right = std::f32::NEG_INFINITY;
+    let mut max_px_bottom = std::f32::NEG_INFINITY;
+    if !visible_indices.is_empty() {
+        for &i in &visible_indices {
+            let s = &profile.screens[i];
+            let (phys_w, phys_h) = if s.rotation % 180 != 0 {
+                (s.selected_mode.height as f32, s.selected_mode.width as f32)
             } else {
-                app.state.drag_snap_active = false;
-                desired
+                (s.selected_mode.width as f32, s.selected_mode.height as f32)
             };
-
-            // Convert final_rect UI coords back to stored physical pos_x/pos_y
-            let new_x_ui = final_rect.left() - (canvas_rect.left() + CANVAS_MARGIN);
-            let new_y_ui = final_rect.top() - (canvas_rect.top() + CANVAS_MARGIN);
-            let new_pos_x = (new_x_ui / PIXELS_PER_MODE_PIXEL) as i32;
-            let new_pos_y = (new_y_ui / PIXELS_PER_MODE_PIXEL) as i32;
-
-            let screen = &mut profile.screens[i];
-            screen.pos_x = new_pos_x;
-            screen.pos_y = new_pos_y;
-
-            // Recompute the UI rect for drawing after the update
-            screen_rect = screen_rect_from_config(screen, canvas_rect);
-            rects[vis_idx] = screen_rect;
-
-            // If dragging ended, clear the anchor
-            if response.drag_stopped() {
-                app.state.drag_anchor_screen = None;
-                app.state.drag_anchor_offset = None;
-                app.state.drag_snap_active = false;
+            let left = s.pos_x as f32;
+            let top = s.pos_y as f32;
+            let right = left + (phys_w / s.scale as f32);
+            let bottom = top + (phys_h / s.scale as f32);
+            if left < min_px_x {
+                min_px_x = left;
+            }
+            if top < min_px_y {
+                min_px_y = top;
+            }
+            if right > max_px_right {
+                max_px_right = right;
+            }
+            if bottom > max_px_bottom {
+                max_px_bottom = bottom;
             }
         }
-
-        // Borrow the (possibly-updated) screen for drawing
-        let screen = &profile.screens[i];
-
-        // Use deterministic color per-screen as background when enabled,
-        // fallback to gray when disabled so the user can tell disabled
-        // screens apart. Keep text white for contrast.
-        let fill = if screen.enabled {
-            let mut c = color_for_id(&format!("{}||{}", screen.id, screen.connector_name));
-            // make slightly darker / semi-opaque for canvas readability
-            c = Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 230);
-            c
-        } else {
-            Color32::from_rgb(65, 65, 65)
-        };
-        painter.rect_filled(screen_rect, 0.0, fill);
-
-        // Show centered title + metadata. Title is slightly larger.
-        let s = screen.scale as f32;
-        let virtual_w = (screen.selected_mode.width as f32 / s) as u32;
-        let virtual_h = (screen.selected_mode.height as f32 / s) as u32;
-
-        // Title should be the human-readable display id (vendor/model),
-        // and the second line is the connector name (eg. DVI-I-2).
-        let title = screen.id.clone();
-        // Show the connector stored in the ScreenConfig (eg. DVI-I-2) as the
-        // second line in the canvas rectangle.
-        let connector = screen.connector_name.clone();
-        let res_line = format!(
-            "{}x{}@{}Hz",
-            virtual_w,
-            virtual_h,
-            trim_float(screen.selected_mode.refresh_hz)
-        );
-        let scale_line = format!("Scale {}", trim_float(screen.scale));
-
-        // Layout constraints
-        let padding = 6.0;
-        let avail_w = (screen_rect.width() - padding * 2.0).max(16.0);
-        let avail_h = (screen_rect.height() - padding * 2.0).max(16.0);
-
-        // Initial font sizes
-        let mut f_title = 15.0f32;
-        let mut f_display = 13.0f32;
-        let mut f_res = 12.0f32;
-        let mut f_scale = 12.0f32;
-
-        // Approximate text width: avg_char_width ~= fs * 0.6
-        let approx_w = |text: &str, fs: f32| -> f32 { text.len() as f32 * fs * 0.6 };
-
-        // If any line is too wide, scale that line down individually
-        let w_title = approx_w(&title, f_title);
-        if w_title > avail_w {
-            let scale = (avail_w / w_title).clamp(0.4, 1.0);
-            f_title *= scale;
-        }
-        let w_display = approx_w(&connector, f_display);
-        if w_display > avail_w {
-            let scale = (avail_w / w_display).clamp(0.4, 1.0);
-            f_display *= scale;
-        }
-        let w_res = approx_w(&res_line, f_res);
-        if w_res > avail_w {
-            let scale = (avail_w / w_res).clamp(0.4, 1.0);
-            f_res *= scale;
-        }
-        let w_scale = approx_w(&scale_line, f_scale);
-        if w_scale > avail_w {
-            let scale = (avail_w / w_scale).clamp(0.4, 1.0);
-            f_scale *= scale;
-        }
-
-        // If total height still too large, scale everything down uniformly
-        let line_h = |fs: f32| fs * 1.2;
-        let total_h = line_h(f_title) + line_h(f_display) + line_h(f_res) + line_h(f_scale);
-        if total_h > avail_h {
-            let scale = (avail_h / total_h).clamp(0.4, 1.0);
-            f_title *= scale;
-            f_display *= scale;
-            f_res *= scale;
-            f_scale *= scale;
-        }
-
-        // Draw lines centered and vertically stacked, with small spacing
-        let center_x = screen_rect.center().x;
-        let mut y = screen_rect.center().y
-            - (line_h(f_title) + line_h(f_display) + line_h(f_res) + line_h(f_scale)) / 2.0;
-
-        painter.text(
-            Pos2::new(center_x, y + line_h(f_title) / 2.0),
-            Align2::CENTER_CENTER,
-            title,
-            FontId::proportional(f_title),
-            Color32::WHITE,
-        );
-        y += line_h(f_title);
-
-        painter.text(
-            Pos2::new(center_x, y + line_h(f_display) / 2.0),
-            Align2::CENTER_CENTER,
-            connector,
-            FontId::proportional(f_display),
-            Color32::WHITE,
-        );
-        y += line_h(f_display);
-
-        painter.text(
-            Pos2::new(center_x, y + line_h(f_res) / 2.0),
-            Align2::CENTER_CENTER,
-            res_line,
-            FontId::proportional(f_res),
-            Color32::WHITE,
-        );
-        y += line_h(f_res);
-
-        painter.text(
-            Pos2::new(center_x, y + line_h(f_scale) / 2.0),
-            Align2::CENTER_CENTER,
-            scale_line,
-            FontId::proportional(f_scale),
-            Color32::WHITE,
-        );
+    } else {
+        // No visible screens: default origin at 0 and content sized to available
+        min_px_x = 0.0;
+        min_px_y = 0.0;
+        max_px_right = (available.x - 2.0 * CANVAS_MARGIN) / PIXELS_PER_MODE_PIXEL;
+        max_px_bottom = (available.y - 2.0 * CANVAS_MARGIN) / PIXELS_PER_MODE_PIXEL;
     }
+
+    // Convert bounding box into UI pixels and add margins. Ensure content is at
+    // least as big as the available area to avoid shrinking the scroll region.
+    let mut content_w = ((max_px_right - min_px_x) * PIXELS_PER_MODE_PIXEL) + 2.0 * CANVAS_MARGIN;
+    let mut content_h = ((max_px_bottom - min_px_y) * PIXELS_PER_MODE_PIXEL) + 2.0 * CANVAS_MARGIN;
+    if content_w < available.x {
+        content_w = available.x;
+    }
+    if content_h < available.y {
+        content_h = available.y;
+    }
+
+    // Use a scrollable area for the canvas so large configurations can be
+    // panned when parts of the layout are out of view.
+    egui::ScrollArea::both()
+        .auto_shrink([false, false])
+        .id_source("canvas-scroll")
+        .show(ui, |ui| {
+            let (content_rect, _) = ui.allocate_exact_size(Vec2::new(content_w, content_h), Sense::hover());
+            let painter = ui.painter_at(content_rect);
+
+            // Draw a faint border around the visible content area for clarity.
+            painter.rect_stroke(
+                content_rect,
+                0.0,
+                Stroke::new(1.0, Color32::from_gray(80)),
+                StrokeKind::Inside,
+            );
+
+            // Continue with canvas rendering inside the scrollable content.
+            // Precompute the UI rects for visible screens using the computed origin.
+            let origin_x = min_px_x as i32;
+            let origin_y = min_px_y as i32;
+            let mut rects: Vec<Rect> = visible_indices
+                .iter()
+                .map(|&i| screen_rect_from_config(&profile.screens[i], content_rect, origin_x, origin_y))
+                .collect();
+
+            // From here on the code mirrors the non-scrolling path but uses
+            // the scrollable content_rect and precomputed rects.
+
+            for vis_idx in 0..visible_indices.len() {
+                let i = visible_indices[vis_idx];
+                // Use the precomputed rect for UI interaction.
+                let mut screen_rect = rects[vis_idx];
+                let response = ui.allocate_rect(screen_rect, Sense::click_and_drag());
+
+                if editable && response.dragged() {
+                    // current pointer position
+                    let pointer_pos = ui
+                        .ctx()
+                        .pointer_interact_pos()
+                        .unwrap_or_else(|| Pos2::new(screen_rect.left(), screen_rect.top()));
+
+                    // If this is a new drag for this screen, capture the anchor offset
+                    if app.state.drag_anchor_screen != Some(i) {
+                        let anchor_offset_x = pointer_pos.x - screen_rect.left();
+                        let anchor_offset_y = pointer_pos.y - screen_rect.top();
+                        app.state.drag_anchor_screen = Some(i);
+                        app.state.drag_anchor_offset = Some((anchor_offset_x, anchor_offset_y));
+                        app.state.drag_snap_active = false;
+                    }
+
+                    let (anchor_x, anchor_y) = app.state.drag_anchor_offset.unwrap_or((
+                        pointer_pos.x - screen_rect.left(),
+                        pointer_pos.y - screen_rect.top(),
+                    ));
+
+                    // Desired rectangle positioned so the pointer stays at the same relative offset
+                    let desired_left = pointer_pos.x - anchor_x;
+                    let desired_top = pointer_pos.y - anchor_y;
+                    let desired =
+                        Rect::from_min_size(Pos2::new(desired_left, desired_top), screen_rect.size());
+
+                    // Build list of other screens' UI rects for snapping. rects[]
+                    // were created by screen_rect_from_config and already map stored
+                    // pos_x/pos_y (physical) to UI positions, and width/height are
+                    // virtual sizes mapped to UI.
+                    let mut others_ui: Vec<Rect> = Vec::new();
+                    for (j, r) in rects.iter().enumerate() {
+                        if j == vis_idx {
+                            continue;
+                        }
+                        others_ui.push(*r);
+                    }
+
+                    let shift_held = ui.ctx().input(|i| i.modifiers.shift);
+
+                    // Apply snapping in UI coordinates (consistent units). Threshold
+                    // is 100 virtual px -> convert to UI pixels.
+                    let final_rect = if !shift_held {
+                        let threshold_ui = 100.0 * PIXELS_PER_MODE_PIXEL;
+                        let snapped = snap_rect_to_others(desired, &others_ui, threshold_ui);
+                        if (snapped.left() - desired.left()).abs() > 0.1
+                            || (snapped.top() - desired.top()).abs() > 0.1
+                        {
+                            app.state.drag_snap_active = true;
+                            snapped
+                        } else {
+                            app.state.drag_snap_active = false;
+                            desired
+                        }
+                    } else {
+                        app.state.drag_snap_active = false;
+                        desired
+                    };
+
+                    // Convert final_rect UI coords back to stored physical pos_x/pos_y
+                    let new_x_ui = final_rect.left() - (content_rect.left() + CANVAS_MARGIN);
+                    let new_y_ui = final_rect.top() - (content_rect.top() + CANVAS_MARGIN);
+                    let new_pos_x = (new_x_ui / PIXELS_PER_MODE_PIXEL) as f32 + origin_x as f32;
+                    let new_pos_y = (new_y_ui / PIXELS_PER_MODE_PIXEL) as f32 + origin_y as f32;
+
+                    let screen = &mut profile.screens[i];
+                    screen.pos_x = new_pos_x.round() as i32;
+                    screen.pos_y = new_pos_y.round() as i32;
+
+                    // Recompute the UI rect for drawing after the update
+                    screen_rect = screen_rect_from_config(screen, content_rect, origin_x, origin_y);
+                    rects[vis_idx] = screen_rect;
+
+                    // If dragging ended, clear the anchor
+                    if response.drag_stopped() {
+                        app.state.drag_anchor_screen = None;
+                        app.state.drag_anchor_offset = None;
+                        app.state.drag_snap_active = false;
+                    }
+                }
+
+                // Borrow the (possibly-updated) screen for drawing
+                let screen = &profile.screens[i];
+
+                // Use deterministic color per-screen as background when enabled,
+                // fallback to gray when disabled so the user can tell disabled
+                // screens apart. Keep text white for contrast.
+                let fill = if screen.enabled {
+                    let mut c = color_for_id(&format!("{}||{}", screen.id, screen.connector_name));
+                    // make slightly darker / semi-opaque for canvas readability
+                    c = Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 230);
+                    c
+                } else {
+                    Color32::from_rgb(65, 65, 65)
+                };
+                painter.rect_filled(screen_rect, 0.0, fill);
+
+                // Show centered title + metadata. Title is slightly larger.
+                let s = screen.scale as f32;
+                let (virt_w_px, virt_h_px) = if screen.rotation % 180 != 0 {
+                    (
+                        (screen.selected_mode.height as f32 / s) as u32,
+                        (screen.selected_mode.width as f32 / s) as u32,
+                    )
+                } else {
+                    (
+                        (screen.selected_mode.width as f32 / s) as u32,
+                        (screen.selected_mode.height as f32 / s) as u32,
+                    )
+                };
+                let virtual_w = virt_w_px;
+                let virtual_h = virt_h_px;
+
+                // Title should be the human-readable display id (vendor/model),
+                // and the second line is the connector name (eg. DVI-I-2).
+                let title = screen.id.clone();
+                // Show the connector stored in the ScreenConfig (eg. DVI-I-2) as the
+                // second line in the canvas rectangle.
+                let connector = screen.connector_name.clone();
+                let res_line = format!(
+                    "{}x{}@{}Hz",
+                    virtual_w,
+                    virtual_h,
+                    trim_float(screen.selected_mode.refresh_hz)
+                );
+                let scale_line = format!("Scale {}", trim_float(screen.scale));
+
+                // Layout constraints
+                let padding = 6.0;
+                let avail_w = (screen_rect.width() - padding * 2.0).max(16.0);
+                let avail_h = (screen_rect.height() - padding * 2.0).max(16.0);
+
+                // Initial font sizes
+                let mut f_title = 15.0f32;
+                let mut f_display = 13.0f32;
+                let mut f_res = 12.0f32;
+                let mut f_scale = 12.0f32;
+
+                // Approximate text width: avg_char_width ~= fs * 0.6
+                let approx_w = |text: &str, fs: f32| -> f32 { text.len() as f32 * fs * 0.6 };
+
+                // If any line is too wide, scale that line down individually
+                let w_title = approx_w(&title, f_title);
+                if w_title > avail_w {
+                    let scale = (avail_w / w_title).clamp(0.4, 1.0);
+                    f_title *= scale;
+                }
+                let w_display = approx_w(&connector, f_display);
+                if w_display > avail_w {
+                    let scale = (avail_w / w_display).clamp(0.4, 1.0);
+                    f_display *= scale;
+                }
+                let w_res = approx_w(&res_line, f_res);
+                if w_res > avail_w {
+                    let scale = (avail_w / w_res).clamp(0.4, 1.0);
+                    f_res *= scale;
+                }
+                let w_scale = approx_w(&scale_line, f_scale);
+                if w_scale > avail_w {
+                    let scale = (avail_w / w_scale).clamp(0.4, 1.0);
+                    f_scale *= scale;
+                }
+
+                // If total height still too large, scale everything down uniformly
+                let line_h = |fs: f32| fs * 1.2;
+                let total_h = line_h(f_title) + line_h(f_display) + line_h(f_res) + line_h(f_scale);
+                if total_h > avail_h {
+                    let scale = (avail_h / total_h).clamp(0.4, 1.0);
+                    f_title *= scale;
+                    f_display *= scale;
+                    f_res *= scale;
+                    f_scale *= scale;
+                }
+
+                // Draw lines centered and vertically stacked, with small spacing
+                let center_x = screen_rect.center().x;
+                let mut y = screen_rect.center().y
+                    - (line_h(f_title) + line_h(f_display) + line_h(f_res) + line_h(f_scale)) / 2.0;
+
+                painter.text(
+                    Pos2::new(center_x, y + line_h(f_title) / 2.0),
+                    Align2::CENTER_CENTER,
+                    title,
+                    FontId::proportional(f_title),
+                    Color32::WHITE,
+                );
+                y += line_h(f_title);
+
+                painter.text(
+                    Pos2::new(center_x, y + line_h(f_display) / 2.0),
+                    Align2::CENTER_CENTER,
+                    connector,
+                    FontId::proportional(f_display),
+                    Color32::WHITE,
+                );
+                y += line_h(f_display);
+
+                painter.text(
+                    Pos2::new(center_x, y + line_h(f_res) / 2.0),
+                    Align2::CENTER_CENTER,
+                    res_line,
+                    FontId::proportional(f_res),
+                    Color32::WHITE,
+                );
+                y += line_h(f_res);
+
+                painter.text(
+                    Pos2::new(center_x, y + line_h(f_scale) / 2.0),
+                    Align2::CENTER_CENTER,
+                    scale_line,
+                    FontId::proportional(f_scale),
+                    Color32::WHITE,
+                );
+            }
+        });
 
     // Align button moved to the bottom bar; no canvas overlay here.
 }
 
-fn screen_rect_from_config(screen: &ScreenConfig, canvas: Rect) -> Rect {
+fn screen_rect_from_config(screen: &ScreenConfig, canvas: Rect, origin_x: i32, origin_y: i32) -> Rect {
     // Show the virtual (logical) resolution when scale is applied. Virtual
     // width/height are physical dimensions divided by scale. Positions are
     // stored in physical pixels, so convert them to virtual coordinates for
@@ -740,10 +853,21 @@ fn screen_rect_from_config(screen: &ScreenConfig, canvas: Rect) -> Rect {
     // Width/height are shown as virtual (physical / scale). Positions are
     // stored in physical pixels and must NOT be scaled; only the size is
     // reduced by the scale when displayed.
-    let w = (screen.selected_mode.width as f32 / scale) * PIXELS_PER_MODE_PIXEL;
-    let h = (screen.selected_mode.height as f32 / scale) * PIXELS_PER_MODE_PIXEL;
-    let x = canvas.left() + CANVAS_MARGIN + (screen.pos_x as f32) * PIXELS_PER_MODE_PIXEL;
-    let y = canvas.top() + CANVAS_MARGIN + (screen.pos_y as f32) * PIXELS_PER_MODE_PIXEL;
+    // Account for rotation: swap width/height for 90/270
+    let (phys_w, phys_h) = if screen.rotation % 180 != 0 {
+        (screen.selected_mode.height as f32, screen.selected_mode.width as f32)
+    } else {
+        (screen.selected_mode.width as f32, screen.selected_mode.height as f32)
+    };
+    let w = (phys_w / scale) * PIXELS_PER_MODE_PIXEL;
+    let h = (phys_h / scale) * PIXELS_PER_MODE_PIXEL;
+    // Position relative to the computed origin so multiple screens that have
+    // negative positions or large offsets are correctly placed inside the
+    // scrollable content rect.
+    let rel_x = (screen.pos_x - origin_x) as f32;
+    let rel_y = (screen.pos_y - origin_y) as f32;
+    let x = canvas.left() + CANVAS_MARGIN + rel_x * PIXELS_PER_MODE_PIXEL;
+    let y = canvas.top() + CANVAS_MARGIN + rel_y * PIXELS_PER_MODE_PIXEL;
     Rect::from_min_size(Pos2::new(x, y), Vec2::new(w, h))
 }
 

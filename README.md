@@ -7,15 +7,18 @@ KanshiUI is a small desktop GUI for managing display profiles when using the Swa
 ![KanshiUI screenshot](./screenshot.jpg)
 
 ## Features
+
 - Visual canvas showing screen layout
 - Sway Support
 - Mirroring
+- Rotation
 - Identify overlays
 - Licensed under GPLv3 (see LICENSE)
 
 ## Quickstart
 
 Requirements
+
 - Rust + Cargo (for building from source)
 - Sway compositor
 - kanshi (optional for applying configuration)
@@ -34,5 +37,3 @@ Start the GUI (dev):
 ```bash
 cargo run --release
 ```
-
-

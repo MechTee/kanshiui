@@ -60,6 +60,8 @@ pub struct ScreenConfig {
     // target on save.
     pub mirror: bool,
     pub mirror_target: Option<String>,
+    // Rotation in degrees: 0, 90, 180, 270
+    pub rotation: i32,
 }
 
 #[derive(Clone, Debug)]

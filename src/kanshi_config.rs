@@ -163,10 +163,29 @@ pub fn generate_profile(profile: &Profile) -> String {
             if let Some(ref target_id) = screen.mirror_target {
                 if let Some(target) = by_id.get(target_id.as_str()) {
                     // Physical sizes (pixels)
-                    let t_w = target.selected_mode.width as f64;
-                    let t_h = target.selected_mode.height as f64;
-                    let s_w = screen.selected_mode.width as f64;
-                    let s_h = screen.selected_mode.height as f64;
+                    // Account for rotation when computing physical sizes.
+                    let (t_w, t_h) = if target.rotation % 180 != 0 {
+                        (
+                            target.selected_mode.height as f64,
+                            target.selected_mode.width as f64,
+                        )
+                    } else {
+                        (
+                            target.selected_mode.width as f64,
+                            target.selected_mode.height as f64,
+                        )
+                    };
+                    let (s_w, s_h) = if screen.rotation % 180 != 0 {
+                        (
+                            screen.selected_mode.height as f64,
+                            screen.selected_mode.width as f64,
+                        )
+                    } else {
+                        (
+                            screen.selected_mode.width as f64,
+                            screen.selected_mode.height as f64,
+                        )
+                    };
 
                     // Target virtual sizes = physical / target.scale
                     let t_scale = if target.scale == 0.0 { 1.0 } else { target.scale };
@@ -203,12 +222,20 @@ pub fn generate_profile(profile: &Profile) -> String {
                         screen.id.replace('\'' , "\\'"),
                         target_id.replace('\'' , "\\'"),
                     ));
+                    let transform_str = match screen.rotation {
+                        0 => "normal".to_string(),
+                        90 => "90".to_string(),
+                        180 => "180".to_string(),
+                        270 => "270".to_string(),
+                        _ => "normal".to_string(),
+                    };
                     out.push_str(&format!(
-                        "  output {id} {state} mode {} position {},{} scale {}\n",
+                        "  output {id} {state} mode {} position {},{} scale {} transform {}\n",
                         screen.selected_mode.as_kanshi_mode(),
                         mirror_pos_x,
                         mirror_pos_y,
                         trim_float(mirror_scale),
+                        transform_str,
                     ));
                     continue;
                 }
@@ -227,12 +254,20 @@ pub fn generate_profile(profile: &Profile) -> String {
         }
 
         // Fallback: write the stored position/scale
+        let transform_str = match screen.rotation {
+            0 => "normal".to_string(),
+            90 => "90".to_string(),
+            180 => "180".to_string(),
+            270 => "270".to_string(),
+            _ => "normal".to_string(),
+        };
         out.push_str(&format!(
-            "  output {id} {state} mode {} position {},{} scale {}\n",
+            "  output {id} {state} mode {} position {},{} scale {} transform {}\n",
             screen.selected_mode.as_kanshi_mode(),
             screen.pos_x,
             screen.pos_y,
             trim_float(screen.scale),
+            transform_str,
         ));
     }
     out.push_str(&format!(
@@ -253,7 +288,7 @@ pub fn screen_multiset(screens: &[ScreenConfig]) -> HashMap<String, usize> {
 
 fn parse_profile_body(body: &str, aliases: &HashMap<String, String>) -> Result<Vec<ScreenConfig>> {
     let inline_re = Regex::new(
-        r#"^\s*output\s+('[^']+'|\"[^\"]+\"|[^\s]+)\s+(enable|disable)(?:\s+mode\s+(\d+)x(\d+)(?:@([0-9.]+)Hz)?)?(?:\s+position\s+(-?\d+),(-?\d+))?(?:\s+scale\s+([0-9.]+))?\s*$"#,
+        r#"^\s*output\s+('[^']+'|\"[^\"]+\"|[^\s]+)\s+(enable|disable)(?:\s+mode\s+(\d+)x(\d+)(?:@([0-9.]+)Hz)?)?(?:\s+position\s+(-?\d+),(-?\d+))?(?:\s+scale\s+([0-9.]+))?(?:\s+transform\s+([A-Za-z0-9-]+))?\s*$"#,
     )?;
 
     let mut screens = Vec::new();
@@ -341,6 +376,7 @@ fn parse_profile_body(body: &str, aliases: &HashMap<String, String>) -> Result<V
             let mut pos_x = 0;
             let mut pos_y = 0;
             let mut scale = 1.0;
+            let mut rotation_val: i32 = 0;
 
             i += 1;
             while i < lines.len() {
@@ -370,6 +406,15 @@ fn parse_profile_body(body: &str, aliases: &HashMap<String, String>) -> Result<V
                     if let Ok(v) = rem.trim().parse::<f64>() {
                         scale = v;
                     }
+                } else if let Some(rem) = inner.strip_prefix("transform ") {
+                    let t = rem.trim();
+                    rotation_val = match t {
+                        "normal" => 0,
+                        "90" => 90,
+                        "180" => 180,
+                        "270" => 270,
+                        _ => 0,
+                    };
                 }
                 i += 1;
             }
@@ -404,6 +449,7 @@ fn parse_profile_body(body: &str, aliases: &HashMap<String, String>) -> Result<V
                 pos_y,
                 mirror,
                 mirror_target,
+                rotation: rotation_val,
             });
         }
         i += 1;
@@ -442,6 +488,18 @@ fn caps_to_screen(
         .get(8)
         .and_then(|m| m.as_str().parse::<f64>().ok())
         .unwrap_or(1.0);
+    // transform (rotation) token is optional; accept values like "normal", "90", "180", "270"
+    let rotation = caps.get(9).map(|m| m.as_str()).unwrap_or("normal");
+    let rotation_deg = match rotation {
+        "normal" => 0,
+        "90" => 90,
+        "180" => 180,
+        "270" => 270,
+        _ => {
+            // Treat unknown values as 0 to be lenient
+            0
+        }
+    };
 
     let mode = OutputMode {
         width,
@@ -459,6 +517,7 @@ fn caps_to_screen(
         pos_y: y,
         mirror: false,
         mirror_target: None,
+        rotation: rotation_deg,
     })
 }
 
@@ -694,11 +753,12 @@ profile "Office"{
                 pos_y: 0,
                 mirror: false,
                 mirror_target: None,
+                rotation: 0,
             }],
             raw_range: None,
         };
         let out = generate_profile(&profile);
         assert!(out.contains("exec notify-send \"Office\""));
-        assert!(out.contains("output eDP-1 enable mode 1920x1080@60Hz position 0,0 scale 1"));
+        assert!(out.contains("output eDP-1 enable mode 1920x1080@60Hz position 0,0 scale 1 transform normal"));
     }
 }
