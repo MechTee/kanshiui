@@ -62,7 +62,9 @@ jobs:
           source=('kanshiui')
           sha256sums=('SKIP')
           package() {
-            install -Dm755 "$srcdir/kanshiui" "$pkgdir/usr/bin/kanshiui"
+            # Keep $srcdir and $pkgdir as literal variables in the PKGBUILD
+            # (they are evaluated by makepkg, not by this workflow shell).
+            install -Dm755 "\$srcdir/kanshiui" "\$pkgdir/usr/bin/kanshiui"
           }
           EOF
           tar -C pkgbuild -cJf dist/kanshiui-${VERSION}-arch.tar.xz .
