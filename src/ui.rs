@@ -63,6 +63,12 @@ pub fn render_main_ui(app: &mut KanshiApp, ctx: &egui::Context) {
                     app.refresh_all();
                 }
 
+                ui.add_space(12.0);
+                ui.label(format!(
+                    "Compositor: {}",
+                    crate::output_backend::compositor_label()
+                ));
+
                 // Align button removed per UI request.
 
                 // Spacer to push the Apply button to the right edge. Keep a 36px margin.

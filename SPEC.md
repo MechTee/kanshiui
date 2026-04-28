@@ -3,9 +3,9 @@ Kanshi GUI SPEC
 
 Purpose
 -------
-Provide a GUI application (Rust + egui) that manages kanshi 1.7+ profiles for sway. The app:
+Provide a GUI application (Rust + egui) that manages kanshi 1.7+ profiles for wlroots compositors such as sway and Hyprland. The app:
 
-- Queries sway for connected outputs (via swayipc).
+- Queries the active compositor for connected outputs (via swayipc or hyprland-rs).
 - Presents screens graphically on a canvas as draggable rectangles.
 - Shows per-screen overlays with identifying information (full make+model+serial and connector name).
 - Allows enable/disable, mode selection (resolution+refresh), scale, and free-position arrangement with optional snap-to-grid.
@@ -35,6 +35,9 @@ src/
 - ui.rs            - UI helpers (canvas, sidebars, dialogs)
 - model.rs         - data model types: RuntimeOutput, OutputMode, ScreenConfig, Profile
 - sway.rs          - swayipc wrapper: rescan outputs, mode list, conversion helpers
+- hyprland.rs      - hyprland-rs wrapper: monitor scan conversion helpers
+- compositor.rs    - runtime compositor detection
+- output_backend.rs- compositor-aware output abstraction
 - kanshi_config.rs - parser & generator + safe write and backups
 - kanshi_restart.rs- systemd restart + fallback
 - notify.rs        - helper for notify-send

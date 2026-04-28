@@ -1,5 +1,6 @@
 use std::process::{Command, Stdio};
 
+use crate::compositor::{Compositor, detect_compositor};
 use crate::model::{trim_float, RuntimeOutput};
 
 fn launch_overlay_process(output: &RuntimeOutput) -> Option<u32> {
@@ -58,19 +59,46 @@ fn launch_overlay_process(output: &RuntimeOutput) -> Option<u32> {
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(80));
         for _ in 0..8 {
-            let criteria = format!("[pid=\"{pid}\"]");
-            // Quote the connector name to be safe for swaymsg parsing.
-            let connector_quoted = connector_for_move.replace('"', "\\\"");
-            let command = format!(
-                "floating enable, sticky enable, border pixel 0, move window to output \"{}\", move position 24 24",
-                connector_quoted
-            );
-            let _ = Command::new("swaymsg")
-                .arg(criteria)
-                .arg(command)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
+            match detect_compositor() {
+                Compositor::Hyprland => {
+                    let _ = Command::new("hyprctl")
+                        .args([
+                            "dispatch",
+                            "movewindowpixel",
+                            "exact",
+                            "24",
+                            "24",
+                            &format!("pid:{pid}"),
+                        ])
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .status();
+                    let _ = Command::new("hyprctl")
+                        .args([
+                            "dispatch",
+                            "movewindow",
+                            &format!("mon:{}", connector_for_move),
+                            &format!("pid:{pid}"),
+                        ])
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .status();
+                }
+                Compositor::Sway | Compositor::Unknown => {
+                    let criteria = format!("[pid=\"{pid}\"]");
+                    let connector_quoted = connector_for_move.replace('"', "\\\"");
+                    let command = format!(
+                        "floating enable, sticky enable, border pixel 0, move window to output \"{}\", move position 24 24",
+                        connector_quoted
+                    );
+                    let _ = Command::new("swaymsg")
+                        .arg(criteria)
+                        .arg(command)
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .status();
+                }
+            }
             std::thread::sleep(std::time::Duration::from_millis(80));
         }
     });

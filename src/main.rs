@@ -1,10 +1,13 @@
 mod app;
+mod compositor;
+mod hyprland;
 mod kanshi_config;
 mod kanshi_restart;
 mod model;
 mod notify;
 mod overlay;
 mod overlay_app;
+mod output_backend;
 mod sway;
 mod ui;
 

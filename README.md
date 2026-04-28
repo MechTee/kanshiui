@@ -1,6 +1,6 @@
 # KanshiUI
 
-KanshiUI is a small desktop GUI for managing display profiles when using the Sway compositor and kanshi. It provides a visual canvas for arranging screens, a sidebar for per-screen settings, and an "Identify Screens" feature that shows one overlay window per connected output with the display name and connector.
+KanshiUI is a small desktop GUI for managing display profiles with kanshi on wlroots-based compositors. It provides a visual canvas for arranging screens, a sidebar for per-screen settings, and an "Identify Screens" feature that shows one overlay window per connected output with the display name and connector.
 
 ## Screenshot
 
@@ -9,7 +9,8 @@ KanshiUI is a small desktop GUI for managing display profiles when using the Swa
 ## Features
 
 - Visual canvas showing screen layout
-- Sway Support
+- Sway support
+- Hyprland support
 - Mirroring
 - Rotation
 - Identify overlays
@@ -20,7 +21,7 @@ KanshiUI is a small desktop GUI for managing display profiles when using the Swa
 Requirements
 
 - Rust + Cargo (for building from source)
-- Sway compositor
+- Sway or Hyprland compositor
 - kanshi (optional for applying configuration)
 
 ## Build

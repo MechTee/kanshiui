@@ -8,8 +8,8 @@ use crate::kanshi_config::{kanshi_config_path, load_profiles, screen_multiset, u
 use crate::kanshi_restart::restart_kanshi;
 use crate::model::{AppState, Profile};
 use crate::notify::notify_profile;
+use crate::output_backend::{compositor_label, default_screen_from_runtime, rescan_outputs};
 use crate::overlay::{kill_identify_overlays, spawn_identify_overlays};
-use crate::sway::{default_screen_from_runtime, rescan_outputs};
 use crate::ui::render_main_ui;
 
 pub struct KanshiApp {
@@ -49,7 +49,8 @@ impl KanshiApp {
                 self.state.connected_outputs = outputs;
             }
             Err(err) => {
-                self.state.status = format!("Failed to scan sway outputs: {err}");
+                self.state.status =
+                    format!("Failed to scan {} outputs: {err}", compositor_label());
                 return;
             }
         }
