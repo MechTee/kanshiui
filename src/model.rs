@@ -104,6 +104,11 @@ pub struct AppState {
     pub drag_anchor_offset: Option<(f32, f32)>,
     // Whether snapping was active during the current drag session
     pub drag_snap_active: bool,
+    // When a drag is in progress we capture the canvas origin (physical px)
+    // used to render the scrollable content so updates to screen positions
+    // during the drag do not cause the canvas to reflow/scroll. Cleared when
+    // the drag ends.
+    pub drag_canvas_origin: Option<(i32, i32)>,
     // Runtime-only sidebar width persistence
     pub sidebar_width: f32,
 }

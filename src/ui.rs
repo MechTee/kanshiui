@@ -608,8 +608,19 @@ fn render_canvas(app: &mut KanshiApp, ui: &mut egui::Ui, editable: bool) {
 
             // Continue with canvas rendering inside the scrollable content.
             // Precompute the UI rects for visible screens using the computed origin.
-            let origin_x = min_px_x as i32;
-            let origin_y = min_px_y as i32;
+            // If a drag is in progress we capture a stable canvas origin in
+            // app.state.drag_canvas_origin so the scrollable content doesn't
+            // jump while the user is dragging a screen.
+            let origin_x = app
+                .state
+                .drag_canvas_origin
+                .map(|(x, _)| x)
+                .unwrap_or(min_px_x as i32);
+            let origin_y = app
+                .state
+                .drag_canvas_origin
+                .map(|(_, y)| y)
+                .unwrap_or(min_px_y as i32);
             let mut rects: Vec<Rect> = visible_indices
                 .iter()
                 .map(|&i| screen_rect_from_config(&profile.screens[i], content_rect, origin_x, origin_y))
@@ -638,6 +649,9 @@ fn render_canvas(app: &mut KanshiApp, ui: &mut egui::Ui, editable: bool) {
                         app.state.drag_anchor_screen = Some(i);
                         app.state.drag_anchor_offset = Some((anchor_offset_x, anchor_offset_y));
                         app.state.drag_snap_active = false;
+                        // Capture the canvas origin at drag start so the
+                        // scrollable content remains stable while dragging.
+                        app.state.drag_canvas_origin = Some((origin_x, origin_y));
                     }
 
                     let (anchor_x, anchor_y) = app.state.drag_anchor_offset.unwrap_or((
@@ -698,11 +712,12 @@ fn render_canvas(app: &mut KanshiApp, ui: &mut egui::Ui, editable: bool) {
                     screen_rect = screen_rect_from_config(screen, content_rect, origin_x, origin_y);
                     rects[vis_idx] = screen_rect;
 
-                    // If dragging ended, clear the anchor
+                    // If dragging ended, clear the anchor and restore canvas origin
                     if response.drag_stopped() {
                         app.state.drag_anchor_screen = None;
                         app.state.drag_anchor_offset = None;
                         app.state.drag_snap_active = false;
+                        app.state.drag_canvas_origin = None;
                     }
                 }
 
